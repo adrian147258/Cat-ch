@@ -1,12 +1,29 @@
 plugins { id 'com.android.application' }
 android { namespace 'com.meowclub.app'; compileSdk 35
- defaultConfig { applicationId 'com.meowclub.app'; minSdk 26; targetSdk 35; versionCode 4; versionName '0.4' }
+ defaultConfig { applicationId 'com.meowclub.app'; minSdk 26; targetSdk 35; versionCode 8; versionName '0.8.0' }
  buildFeatures { buildConfig true }
  def props = new Properties()
  def local = rootProject.file('local.properties')
  if (local.exists()) { local.withInputStream { props.load(it) } }
- def apiUrl = props.getProperty('catch.apiBaseUrl', 'https://example.invalid')
+ def apiUrl = props.getProperty('catch.apiBaseUrl', '').trim()
+ if (apiUrl.isEmpty() || apiUrl ==~ /(?i)https:\/\/[^\/]*\.invalid(?::[0-9]+)?\/?/) { throw new GradleException('Configure catch.apiBaseUrl in local.properties with your deployed HTTPS backend origin; the placeholder cannot connect.') }
+ apiUrl = apiUrl.replaceAll('/+$', '')
  if (!(apiUrl ==~ /https:\/\/[A-Za-z0-9.-]+(?::[0-9]+)?/)) { throw new GradleException('catch.apiBaseUrl must be an HTTPS origin') }
  defaultConfig { buildConfigField 'String', 'API_BASE_URL', '"' + apiUrl + '"' }
+ def signingProps = new Properties()
+ def signingFile = rootProject.file('signing.properties')
+ if (signingFile.exists()) {
+  signingFile.withInputStream { signingProps.load(it) }
+  signingConfigs {
+   release {
+    storeFile rootProject.file(signingProps.getProperty('storeFile'))
+    storePassword signingProps.getProperty('storePassword')
+    keyAlias signingProps.getProperty('keyAlias')
+    keyPassword signingProps.getProperty('keyPassword')
+    storeType signingProps.getProperty('storeType', 'PKCS12')
+   }
+  }
+  buildTypes { release { signingConfig signingConfigs.release } }
+ }
  compileOptions { sourceCompatibility JavaVersion.VERSION_1_8; targetCompatibility JavaVersion.VERSION_1_8 }
 }

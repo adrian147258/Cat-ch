@@ -1,0 +1,17 @@
+{
+  "name": "meowbackend",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "scripts": {
+    "test": "node auth-test.mjs && node integration-test.mjs"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "better-auth": "^1.7.5",
+    "esbuild": "^0.25.12"
+  }
+}

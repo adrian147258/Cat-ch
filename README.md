@@ -4,11 +4,13 @@
 
 ## 下载安装
 
-1. 打开 [下载页面](https://github.com/adrian147258/Cat-ch/releases/tag/v0.5.0-beta)。
-2. 在 **Assets** 中下载 `Cat-ch-0.5.apk`。
+1. 打开 [下载页面](https://github.com/adrian147258/Cat-ch/releases/tag/v0.8.0-beta)。
+2. 在 **Assets** 中下载 `Cat-ch-0.8.0.apk`。
 3. 在 Android 手机中打开安装包，按系统提示安装。需要 Android 8.0 或更新版本。
 
 这是测试版，尚未完成所有真机测试。如果手机提示安装来源权限，请根据设备的系统提示选择是否允许安装。
+
+0.8 更换了应用签名，已安装旧版的用户需要卸载旧版后再安装；卸载会清除旧版保存在手机本地的数据。0.8 以后的更新将继续使用新的签名。
 
 ## 怎么使用
 
@@ -21,7 +23,7 @@
 
 ## 开发与实现
 
-客户端使用 Android 原生 Java 开发。登录和社区数据由后端服务提供。本仓库目前提供 Android 客户端；后端尚未包含在仓库内。仓库中的服务地址使用占位配置，下载的测试版安装包则连接现有服务。
+客户端使用 Android 原生 Java 开发。登录和社区数据由后端服务提供。本仓库包含 Android 客户端及 backend 目录中的后端源码。构建时需要自行配置服务地址，下载的测试版安装包已配置现有服务。
 
 使用 Android Studio 打开项目，安装 JDK 17 和 Android SDK 35。构建前在未提交的 `local.properties` 中配置自己的服务地址：
 
@@ -29,8 +31,31 @@
 catch.apiBaseUrl=https://your-api.example.com
 ```
 
-调试签名由开发环境生成；不要上传自己的签名文件、密码、API 密钥、会话令牌或生产配置。
+调试签名由开发环境生成。正式版签名通过项目根目录下未提交的 `signing.properties` 配置，支持 `storeFile`、`storeType`、`storePassword`、`keyAlias` 和 `keyPassword`。不要上传签名文件、密码、API 密钥、会话令牌或生产配置。
 
 ## 许可证
 
 源码以 [MIT License](LICENSE) 发布。
+
+## 0.8 更新
+
+- 界面采用暖米白、浅燕麦和陶土色配色，更新了登录页、导航和应用图标。
+- 登录时区分域名解析失败、连接超时、证书异常和服务器不可达等问题。
+- 更换固定应用签名，为后续版本覆盖更新做好准备。
+- 修复提示条关闭时可能发生的崩溃，完善后端跨域请求头和本地测试服务。
+
+登录与社区功能仍依赖后端服务。部分网络环境可能无法访问当前服务地址；本次更新没有新增自动代理或备用线路。
+
+## 0.6 更新
+
+- 新增抽卡导航与已获得卡片收藏。
+- 每日一包、每包一张，北京时间零点刷新，服务端限制重复抽取。
+- 绿卡 70%、蓝卡 20%、紫卡 8%、金卡 2%；共 43 张卡。
+- 手机滑动撕包、转动手机改变卡片光效，稀有度越高揭晓动画越长。
+- 新增评论与回复。
+
+## 后端配置
+
+配置 DB (D1)、PICTURES (R2)、AUTH_BASE_URL、BREVO_SENDER_EMAIL，以及私密 BETTER_AUTH_SECRET、BREVO_API_KEY。现有数据库新增功能需运行 backend/cards-migration.sql 和 backend/comments-migration.sql；不要重置已有数据。后端鉴权使用 better-auth，构建时需按目标运行环境配置 Node 兼容。
+
+字体授权参见 app/src/main/assets/LXGWWenKai-OFL.txt。

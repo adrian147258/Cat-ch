@@ -1,0 +1,21 @@
+import assert from 'node:assert/strict';import {DatabaseSync} from 'node:sqlite';import {readFile} from 'node:fs/promises';import worker from './worker.mjs';
+const db=new DatabaseSync(':memory:');db.exec(await readFile('schema.sql','utf8'));db.exec(await readFile('auth-schema.sql','utf8'));db.exec(await readFile('comments-migration.sql','utf8'));db.exec(await readFile('cards-migration.sql','utf8'));
+class Stmt{constructor(s){this.s=s;this.a=[]}bind(...a){this.a=a.map(x=>x instanceof Date?x.getTime():x);return this}async first(){return db.prepare(this.s).get(...this.a)??null}async all(){let st=db.prepare(this.s);let rows=st.all(...this.a);return {results:rows,meta:{changes:Number(db.prepare('SELECT changes() c').get().c),last_row_id:0}}}async run(){let r=db.prepare(this.s).run(...this.a);return {meta:{changes:Number(r.changes),last_row_id:Number(r.lastInsertRowid)}}}}
+const objects=new Map(),env={BETTER_AUTH_SECRET:'test-only-not-a-real-key-1234567890123456789',BREVO_API_KEY:'fake',AUTH_BASE_URL:'http://localhost:8787',DB:{exec:async s=>db.exec(s),prepare:s=>new Stmt(s),batch:async a=>{db.exec('BEGIN');try{let out=[];for(const x of a)out.push(await x.all());db.exec('COMMIT');return out}catch(e){db.exec('ROLLBACK');throw e}}},PICTURES:{put:async(k,v)=>objects.set(k,v),get:async k=>objects.has(k)?{body:objects.get(k)}:null,delete:async k=>objects.delete(k)}};
+let mails=[];globalThis.fetch=async(url,opt)=>{assert.equal(url,'https://api.brevo.com/v3/smtp/email');const body=JSON.parse(opt.body);mails.push(body);return Response.json({messageId:'fake'});};
+const run=(path,method='GET',body=null,token=null,more={})=>worker.fetch(new Request('http://localhost:8787'+path,{method,headers:{...(body&&typeof body==='string'?{'Content-Type':'application/json'}:{}),...(token?{Authorization:'Bearer '+token}:{}),...more},...(body?{body}:{}),}),env);
+async function signup(email){let a=await run('/api/auth/sign-up/email','POST',JSON.stringify({name:'Tester',email,password:'test-only-password'}));assert.equal(a.status,200,await a.clone().text());let otp=mails.at(-1).textContent.match(/[0-9]{6}/)[0];let b=await run('/api/auth/email-otp/verify-email','POST',JSON.stringify({email,otp}));assert.equal(b.status,200,await b.clone().text());return b.headers.get('set-auth-token');}
+let first=await signup('one@example.test'),second=await signup('two@example.test');assert.ok(first&&second);
+let upload=await run('/posts','POST',new Uint8Array([255,216,255,217]),first,{'X-Meow-Text':encodeURIComponent('小猫')});assert.equal(upload.status,201,await upload.clone().text());let id=(await upload.json()).id;
+let list=await (await run('/posts','GET',null,second)).json();assert.equal(list.posts.length,1);assert.equal(list.posts[0].mine,false);assert.equal(list.posts[0].text,'小猫');
+let comment=await run('/posts/'+id+'/comments','POST',JSON.stringify({text:'hello'}),first);assert.equal(comment.status,201);let cid=(await comment.json()).id;
+assert.equal((await run('/posts/'+id+'/comments','POST',JSON.stringify({text:'reply',parent_id:cid}),second)).status,201);
+assert.equal((await (await run('/posts/'+id+'/comments','GET',null,second)).json()).comments.length,2);
+assert.equal((await run('/cards/draw','POST')).status,401);
+assert.equal((await run('/cards/draw','POST',null,first)).status,201);
+assert.equal((await run('/cards/draw','POST',null,first)).status,409);
+assert.equal((await run('/cards/draw','POST',null,second)).status,201);
+assert.equal((await (await run('/cards','GET',null,first)).json()).cards.length,1);
+assert.equal((await run('/posts/'+id+'/like','PUT',JSON.stringify({active:true}),second)).status,200);assert.equal((await run('/posts/'+id,'DELETE',null,second)).status,404);assert.equal((await run('/posts/'+id,'DELETE',null,first)).status,200);
+let login=await run('/api/auth/sign-in/email','POST',JSON.stringify({email:'one@example.test',password:'test-only-password'}));assert.equal(login.status,200,await login.clone().text());assert.ok(login.headers.get('set-auth-token'));
+assert.equal((await run('/session','POST')).status,401);assert.equal((await run('/posts')).status,401);console.log('Passed D1-compatible auth, verification, password login, two-user feed, likes, ownership, and no anonymous session');
