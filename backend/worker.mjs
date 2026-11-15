@@ -1,6 +1,6 @@
 import { makeAuth } from './auth.mjs';
 const MAX_IMAGE = 2_000_000;
-const MAX_POSTS = 1000;
+const MAX_POSTS = 100_000;
 const DAILY_PER_USER = 20;
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Access-Control-Allow-Headers':'Authorization,Content-Type,X-Meow-Name,X-Meow-Text,X-Meow-Breed,X-Legacy-Token'};
 const BREEDS = new Set(['橘猫','布偶','狸花','英短','美短','三花','其它']);
