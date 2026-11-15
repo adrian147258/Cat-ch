@@ -4,7 +4,7 @@
   "description": "",
   "main": "index.js",
   "scripts": {
-    "test": "node auth-test.mjs && node integration-test.mjs"
+    "test": "node auth-test.mjs && node integration-test.mjs && node pages-gateway/gateway-test.mjs"
   },
   "keywords": [],
   "author": "",
