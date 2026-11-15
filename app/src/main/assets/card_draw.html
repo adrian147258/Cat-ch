@@ -931,7 +931,14 @@ muteBtn.addEventListener('click', () => {
 });
 document.addEventListener('visibilitychange', () => { if (document.hidden) sfx?.rip(0); });   // frames stop in a hidden tab, so nothing else would ever turn the tear down
 
-measure(); enter(); requestAnimationFrame(frame);
+measure(); enter();
+if (window.__nativeCard.preview) {
+  clearTimeout(settle); state = 'spread'; hit.disabled = true;
+  pack.style.visibility = flow.style.visibility = ground.style.visibility = 'hidden';
+  bits = []; spawn(); scene.classList.add('flat'); again.hidden = true;
+  for (const c of cards) { c.phase = 'spread'; c.f = fan(c); c.el.classList.add('out'); for (const k in c.f) c.p[k].x = c.p[k].to = c.f[k]; }
+}
+requestAnimationFrame(frame);
 // Motion data is used only locally. Touch remains available if permission is denied.
 const sensor={active:false,x:0,y:0,base:null};
 function orientation(e){ if(e.beta==null||e.gamma==null)return; if(!sensor.base)sensor.base={b:e.beta,g:e.gamma}; let x=(e.gamma-sensor.base.g)/25,y=(e.beta-sensor.base.b)/25; const angle=screen.orientation?.angle||0; if(angle===90)[x,y]=[y,-x]; else if(angle===270)[x,y]=[-y,x]; else if(Math.abs(angle)===180)[x,y]=[-x,-y]; sensor.x=clamp(x,-1,1);sensor.y=clamp(y,-1,1);sensor.active=true; }

@@ -9,7 +9,8 @@ test('forwards an authenticated request and rewrites the gateway origin', async 
     headers: {
       origin: 'https://cat-ch-api.pages.dev',
       authorization: 'Bearer test-token',
-      'content-type': 'image/jpeg'
+      'content-type': 'image/jpeg',
+      'x-meow-breed': encodeURIComponent('布偶')
     },
     body
   });
@@ -20,6 +21,7 @@ test('forwards an authenticated request and rewrites the gateway origin', async 
         assert.equal(forwarded.method, 'POST');
         assert.equal(forwarded.headers.get('origin'), 'https://meowclub-api.meowclub-eb2c8.workers.dev');
         assert.equal(forwarded.headers.get('authorization'), 'Bearer test-token');
+        assert.equal(forwarded.headers.get('x-meow-breed'), encodeURIComponent('布偶'));
         assert.deepEqual(new Uint8Array(await forwarded.arrayBuffer()), body);
         return Response.json({ ok: true }, { status: 201 });
       }

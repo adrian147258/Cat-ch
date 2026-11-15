@@ -2,7 +2,8 @@ import { makeAuth } from './auth.mjs';
 const MAX_IMAGE = 2_000_000;
 const MAX_POSTS = 1000;
 const DAILY_PER_USER = 20;
-const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Access-Control-Allow-Headers':'Authorization,Content-Type,X-Meow-Name,X-Meow-Text,X-Legacy-Token'};
+const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Access-Control-Allow-Headers':'Authorization,Content-Type,X-Meow-Name,X-Meow-Text,X-Meow-Breed,X-Legacy-Token'};
+const BREEDS = new Set(['橘猫','布偶','狸花','英短','美短','三花','其它']);
 const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...cors};
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers});
 const fail=(message,status=400)=>json({error:message},status);
@@ -10,13 +11,106 @@ const digest=async token=>Array.from(new Uint8Array(await crypto.subtle.digest('
 async function user(req,env,auth){const session=await auth.api.getSession({headers:req.headers});return session?.user?.emailVerified?session.user:null;}
 function decodeHeader(v,max){try{return decodeURIComponent(v||'').trim().slice(0,max)}catch{return ''}}
 function typeOfImage(bytes){if(bytes.length>3&&bytes[0]===255&&bytes[1]===216&&bytes[2]===255)return 'image/jpeg';if(bytes.length>8&&bytes[0]===137&&bytes[1]===80&&bytes[2]===78&&bytes[3]===71&&bytes[4]===13&&bytes[5]===10&&bytes[6]===26&&bytes[7]===10)return 'image/png';if(bytes.length>12&&String.fromCharCode(...bytes.slice(0,4))==='RIFF'&&String.fromCharCode(...bytes.slice(8,12))==='WEBP')return 'image/webp';return null;}
+function coverPath(userId,coverKey){
+ if(!coverKey)return null;
+ return '/profile-covers/'+encodeURIComponent(userId)+'?v='+encodeURIComponent(coverKey.split('/').pop());
+}
+async function readImage(req){
+ const size=Number(req.headers.get('Content-Length')||0);
+ if(size>MAX_IMAGE)return {error:fail('图片超过 2MB，请换一张',413)};
+ if(!req.body)return {error:fail('没有收到图片')};
+ const chunks=[];let total=0;const reader=req.body.getReader();
+ while(true){
+  const {done,value}=await reader.read();if(done)break;
+  total+=value.byteLength;
+  if(total>MAX_IMAGE){await reader.cancel();return {error:fail('图片超过 2MB，请换一张',413)};}
+  chunks.push(value);
+ }
+ if(!total)return {error:fail('没有收到图片')};
+ const bytes=new Uint8Array(total);let offset=0;
+ for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+ const type=typeOfImage(bytes);
+ if(!type)return {error:fail('只支持 JPG、PNG 和 WebP 图片')};
+ return {bytes,type};
+}
+async function readSmallJson(req){
+ if(Number(req.headers.get('Content-Length')||0)>4096)return {error:fail('请求过大',413)};
+ if(!req.body)return {error:fail('请求格式不正确')};
+ const reader=req.body.getReader(),chunks=[];let total=0;
+ while(true){
+  const {done,value}=await reader.read();if(done)break;
+  total+=value.byteLength;
+  if(total>4096){await reader.cancel();return {error:fail('请求过大',413)};}
+  chunks.push(value);
+ }
+ const bytes=new Uint8Array(total);let offset=0;
+ for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+ try{return {value:JSON.parse(new TextDecoder().decode(bytes))};}
+ catch{return {error:fail('请求格式不正确')};}
+}
 async function handle(req,env){
  const u=new URL(req.url),path=u.pathname;if(req.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
  if(req.method==='GET'&&path==='/health')return json({ok:true,service:'meowclub',version:1});
  const auth=makeAuth(env);if(path.startsWith('/api/auth/'))return auth.handler(req);
  const match=path.match(/^\/images\/(cloud_[0-9a-f-]{36})$/);
  if(req.method==='GET'&&match){const post=await env.DB.prepare('SELECT object_key,content_type FROM posts WHERE id=?').bind(match[1]).first();if(!post)return fail('图片不存在',404);const obj=await env.PICTURES.get(post.object_key);if(!obj)return fail('图片不存在',404);return new Response(obj.body,{headers:{'Content-Type':post.content_type,'Cache-Control':'public,max-age=300','X-Content-Type-Options':'nosniff',...cors}});}
+ const coverMatch=path.match(/^\/profile-covers\/([A-Za-z0-9_-]{1,128})$/);
+ if(req.method==='GET'&&coverMatch){
+  const profile=await env.DB.prepare('SELECT cover_key,cover_type FROM profiles WHERE user_id=?').bind(coverMatch[1]).first();
+  if(!profile?.cover_key)return fail('封面不存在',404);
+  const object=await env.PICTURES.get(profile.cover_key);
+  if(!object)return fail('封面不存在',404);
+  return new Response(object.body,{headers:{'Content-Type':profile.cover_type,'Cache-Control':'public,max-age=300','X-Content-Type-Options':'nosniff',...cors}});
+ }
  const me=await user(req,env,auth);if(!me)return fail('身份已失效，请重新打开应用',401);
+ if(path==='/profile'&&req.method==='GET'){
+  const profile=await env.DB.prepare('SELECT signature,cover_key FROM profiles WHERE user_id=?').bind(me.id).first();
+  return json({id:me.id,name:me.name,signature:profile?.signature||'',cover:coverPath(me.id,profile?.cover_key)});
+ }
+ if(path==='/profile'&&req.method==='PUT'){
+  const parsed=await readSmallJson(req);if(parsed.error)return parsed.error;
+  const input=parsed.value;
+  if(typeof input?.signature!=='string')return fail('签名格式不正确');
+  const signature=input.signature.trim();
+  if(Array.from(signature).length>120)return fail('签名最多 120 字');
+  await env.DB.prepare(`INSERT INTO profiles(user_id,signature,updated_at) VALUES(?,?,?)
+   ON CONFLICT(user_id) DO UPDATE SET signature=excluded.signature,updated_at=excluded.updated_at`).bind(me.id,signature,Date.now()).run();
+  return json({signature});
+ }
+ if(path==='/profile/cover'&&req.method==='PUT'){
+  const image=await readImage(req);if(image.error)return image.error;
+  const key='profile-covers/'+me.id+'/'+crypto.randomUUID();
+  await env.PICTURES.put(key,image.bytes,{httpMetadata:{contentType:image.type}});
+  let previous=null,updated=false;
+  try{
+   await env.DB.prepare('INSERT OR IGNORE INTO profiles(user_id,updated_at) VALUES(?,?)').bind(me.id,Date.now()).run();
+   for(let attempt=0;attempt<3&&!updated;attempt++){
+    const profile=await env.DB.prepare('SELECT cover_key FROM profiles WHERE user_id=?').bind(me.id).first();
+    previous=profile?.cover_key||null;
+    const result=await env.DB.prepare('UPDATE profiles SET cover_key=?,cover_type=?,updated_at=? WHERE user_id=? AND cover_key IS ?').bind(key,image.type,Date.now(),me.id,previous).run();
+    updated=!!result.meta.changes;
+   }
+   if(!updated)throw new Error('Concurrent cover update');
+  }catch(error){await env.PICTURES.delete(key);throw error;}
+  if(previous){try{await env.PICTURES.delete(previous)}catch(error){console.error(JSON.stringify({event:'cover_cleanup_failed'}));}}
+  return json({id:me.id,cover:coverPath(me.id,key)});
+ }
+ const profileMatch=path.match(/^\/profiles\/([A-Za-z0-9_-]{1,128})$/);
+ if(req.method==='GET'&&profileMatch){
+  const owner=await env.DB.prepare('SELECT id,name FROM "user" WHERE id=? AND emailVerified=1').bind(profileMatch[1]).first();
+  if(!owner)return fail('猫友不存在',404);
+  const profile=await env.DB.prepare('SELECT signature,cover_key FROM profiles WHERE user_id=?').bind(owner.id).first();
+  const before=u.searchParams.get('before'),beforeId=u.searchParams.get('before_id');
+  if((before===null)!==(beforeId===null))return fail('作品分页参数不正确');
+  if(before!==null&&(!/^\d+$/.test(before)||!Number.isSafeInteger(Number(before))||!/^cloud_[0-9a-f-]{36}$/.test(beforeId)))return fail('作品分页参数不正确');
+  const query=before===null
+   ?env.DB.prepare('SELECT id,name,text,breed,created_at FROM posts WHERE owner_id=? ORDER BY created_at DESC,id DESC LIMIT 51').bind(owner.id)
+   :env.DB.prepare('SELECT id,name,text,breed,created_at FROM posts WHERE owner_id=? AND (created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT 51').bind(owner.id,Number(before),Number(before),beforeId);
+  const result=await query.all(),items=result.results.slice(0,50);
+  const count=await env.DB.prepare('SELECT COUNT(*) AS count FROM posts WHERE owner_id=?').bind(owner.id).first();
+  const last=items[items.length-1];
+  return json({id:owner.id,name:owner.name,signature:profile?.signature||'',cover:coverPath(owner.id,profile?.cover_key),post_count:count?.count||0,next:result.results.length>50?{before:last.created_at,before_id:last.id}:null,posts:items.map(p=>({id:p.id,name:p.name,text:p.text,breed:p.breed,created_at:p.created_at,image:'/images/'+p.id}))});
+ }
  if(path==='/cards' && req.method==='GET'){
   const day=new Date(Date.now()+8*3600000).toISOString().slice(0,10);
   const cards=await env.DB.prepare('SELECT day,tier,card_index,created_at FROM card_draws WHERE user_id=? ORDER BY created_at DESC,day DESC LIMIT 2000').bind(me.id).all();
@@ -42,19 +136,23 @@ async function handle(req,env){
   ]);return json({ok:true});
  }
  if(req.method==='GET'&&path==='/posts'){
-  const r=await env.DB.prepare(`SELECT p.id,p.name,p.text,p.owner_id,p.created_at,
+  const r=await env.DB.prepare(`SELECT p.id,p.name,p.text,p.breed,p.owner_id,p.created_at,u.id AS author_id,
    EXISTS(SELECT 1 FROM reactions x WHERE x.post_id=p.id AND x.user_id=? AND x.kind='like') AS liked,
    EXISTS(SELECT 1 FROM reactions x WHERE x.post_id=p.id AND x.user_id=? AND x.kind='save') AS saved
-   FROM posts p ORDER BY p.created_at DESC,p.id DESC LIMIT 100`).bind(me.id,me.id).all();
-  return json({posts:r.results.map(p=>({id:p.id,name:p.name,text:p.text,mine:p.owner_id===me.id,liked:!!p.liked,saved:!!p.saved,created_at:p.created_at,image:'/images/'+p.id}))});
+   FROM posts p LEFT JOIN "user" u ON u.id=p.owner_id AND u.emailVerified=1 ORDER BY p.created_at DESC,p.id DESC LIMIT 100`).bind(me.id,me.id).all();
+  return json({posts:r.results.map(p=>({id:p.id,name:p.name,text:p.text,breed:p.breed,author_id:p.author_id,mine:p.owner_id===me.id,liked:!!p.liked,saved:!!p.saved,created_at:p.created_at,image:'/images/'+p.id}))});
  }
  if(req.method==='POST'&&path==='/posts'){
-  const size=Number(req.headers.get('Content-Length')||0);if(size>MAX_IMAGE)return fail('图片超过 2MB，请换一张',413);
-  if(!req.body)return fail('没有收到图片');const chunks=[];let n=0;const reader=req.body.getReader();while(true){const {done,value}=await reader.read();if(done)break;n+=value.byteLength;if(n>MAX_IMAGE){await reader.cancel();return fail('图片超过 2MB，请换一张',413);}chunks.push(value)}if(!n)return fail('没有收到图片');const bytes=new Uint8Array(n);let pos=0;for(const c of chunks){bytes.set(c,pos);pos+=c.length}const type=typeOfImage(bytes);if(!type)return fail('只支持 JPG、PNG 和 WebP 图片');
+  const rawBreed=req.headers.get('X-Meow-Breed');
+  const breed=rawBreed===null?null:decodeHeader(rawBreed,24);
+  // Older clients do not send a breed; preserve compatibility without guessing.
+  if(rawBreed!==null&&!BREEDS.has(breed))return fail('请选择有效的小猫种类');
+  const image=await readImage(req);if(image.error)return image.error;
+  const {bytes,type}=image,n=bytes.length;
   const id='cloud_'+crypto.randomUUID(),key='posts/'+id;const name=decodeHeader(req.headers.get('X-Meow-Name'),24)||'猫猫爱好者',text=decodeHeader(req.headers.get('X-Meow-Text'),200)||'今日份小猫 🐾';const now=Date.now();
   await env.PICTURES.put(key,bytes,{httpMetadata:{contentType:type}});
-  try{const result=await env.DB.prepare(`INSERT INTO posts(id,owner_id,name,text,object_key,content_type,size_bytes,created_at)
-   SELECT ?,?,?,?,?,?,?,? WHERE (SELECT uploads FROM quota WHERE id=1) < ? AND (SELECT COUNT(*) FROM posts WHERE owner_id=? AND created_at>?) < ?`).bind(id,me.id,name,text,key,type,n,now,MAX_POSTS,me.id,now-86400000,DAILY_PER_USER).run();if(!result.meta.changes){await env.PICTURES.delete(key);return fail('发布已达测试额度，请稍后再试',429);}}
+  try{const result=await env.DB.prepare(`INSERT INTO posts(id,owner_id,name,text,breed,object_key,content_type,size_bytes,created_at)
+   SELECT ?,?,?,?,?,?,?,?,? WHERE (SELECT uploads FROM quota WHERE id=1) < ? AND (SELECT COUNT(*) FROM posts WHERE owner_id=? AND created_at>?) < ?`).bind(id,me.id,name,text,breed,key,type,n,now,MAX_POSTS,me.id,now-86400000,DAILY_PER_USER).run();if(!result.meta.changes){await env.PICTURES.delete(key);return fail('发布已达测试额度，请稍后再试',429);}}
   catch(e){await env.PICTURES.delete(key);throw e;}return json({id},201);
  }
  const react=path.match(/^\/posts\/(cloud_[0-9a-f-]{36})\/(like|save)$/);

@@ -13,6 +13,7 @@ import android.widget.FrameLayout;
 import android.text.TextWatcher;
 import android.text.Editable;
 import android.widget.LinearLayout;
+import android.widget.ImageView;
 import android.widget.TextView;
 
 /** Login and registration controls; the owner provides the authenticated API implementation. */
@@ -23,23 +24,23 @@ public final class AuthPanel extends LinearLayout {
   void loginWithPassword(String email, String password);
   void loginWithCode(String email, String verificationCode);
  }
- private static final int ACCENT=0xff9b5b3f,INK=0xff3e3832,PALE=0xffeee7dc;
+ private static final int ACCENT=0xff5b777f,INK=0xff373334,PALE=0xffe8edeb;
  private final Listener listener;
  private LinearLayout fields, tabs;
  private EditText name,email,password,code;
  private String mode="password";
  private TextView message,submit,send;
  private boolean busy;
- public AuthPanel(Context context,Listener listener){super(context);this.listener=listener;setOrientation(VERTICAL);setPadding(dp(22),dp(16),dp(22),dp(16));setBackgroundColor(0xfffaf7f1);render();}
+ public AuthPanel(Context context,Listener listener){super(context);this.listener=listener;setOrientation(VERTICAL);setPadding(dp(22),dp(16),dp(22),dp(16));setBackgroundColor(0xfff8f5f1);render();}
  private int dp(int n){return (int)(n*getResources().getDisplayMetrics().density+.5f);}
- private GradientDrawable background(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));return d;}
+ private GradientDrawable background(int color,int radius){GradientDrawable d=new GradientDrawable();d.setColor(color);d.setCornerRadius(dp(radius));d.setStroke(dp(1),0xff514c4b);return d;}
  private TextView label(String text,int size,int color){TextView t=new TextView(getContext());t.setTypeface(AppFont.get(getContext()));t.setText(text);t.setTextColor(color);t.setTextSize(size);t.setGravity(Gravity.CENTER);return t;}
- private TextView control(String text,Runnable action){TextView t=label(text,15,INK);t.setBackground(background(PALE,24));t.setOnClickListener(v->{if(!busy)action.run();});return t;}
+ private TextView control(String text,Runnable action){TextView t=label(text,15,INK);t.setBackground(new android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x335b777f),background(0xfffffdfa,20),null));t.setElevation(dp(2));t.setOnClickListener(v->{if(!busy)action.run();});return t;}
  private EditText input(String hint,int type){EditText e=new EditText(getContext());e.setSingleLine(true);e.setTextSize(15);e.setTextColor(INK);e.setInputType(type);e.setTypeface(AppFont.get(getContext()));e.setPadding(dp(16),dp(17),dp(16),0);e.setBackgroundColor(Color.TRANSPARENT);e.setContentDescription(hint);e.setTag(hint);return e;}
  private View floating(EditText e){FrameLayout box=new FrameLayout(getContext());box.setBackground(background(PALE,16));box.addView(e,new FrameLayout.LayoutParams(-1,-1));TextView title=label((String)e.getTag(),15,INK);title.setGravity(Gravity.LEFT|Gravity.CENTER_VERTICAL);title.setPivotX(0);title.setPivotY(0);FrameLayout.LayoutParams lp=new FrameLayout.LayoutParams(-1,dp(24));lp.leftMargin=dp(16);lp.topMargin=dp(17);box.addView(title,lp);title.setOnClickListener(v->{e.requestFocus();((android.view.inputmethod.InputMethodManager)getContext().getSystemService(Context.INPUT_METHOD_SERVICE)).showSoftInput(e,0);});Runnable update=()->{boolean up=e.hasFocus()||e.length()>0;title.animate().translationY(up?-dp(12):0).scaleX(up?.76f:1f).scaleY(up?.76f:1f).setDuration(160).start();title.setTextColor(e.hasFocus()?ACCENT:INK);};e.setOnFocusChangeListener((v,f)->update.run());e.addTextChangedListener(new TextWatcher(){public void beforeTextChanged(CharSequence s,int st,int c,int a){}public void onTextChanged(CharSequence s,int st,int b,int c){update.run();}public void afterTextChanged(Editable x){}});return box;}
  private void addField(View v,int height){LayoutParams lp=new LayoutParams(-1,dp(60));lp.bottomMargin=dp(12);fields.addView(v instanceof EditText?floating((EditText)v):v,lp);}
  private void render(){
-  removeAllViews();TextView cat=label("ฅ^•ﻌ•^ฅ",42,ACCENT);addView(cat,new LayoutParams(-1,dp(85)));TextView title=label("欢迎来到 Cat-ch",23,INK);title.setTypeface(AppFont.get(getContext()),Typeface.BOLD);addView(title,new LayoutParams(-1,dp(45)));
+  removeAllViews();ImageView cat=CatArt.image(getContext(),0);addView(cat,new LayoutParams(-1,dp(85)));TextView title=label("欢迎来到 Cat-ch",23,INK);title.setTypeface(AppFont.get(getContext()),Typeface.BOLD);addView(title,new LayoutParams(-1,dp(45)));
   tabs=new LinearLayout(getContext());String[] titles={"密码登录","验证码登录","注册"};String[] modes={"password","code","register"};
   for(int i=0;i<titles.length;i++){final String m=modes[i];TextView t=control(titles[i],()->{mode=m;render();});if(mode.equals(m)){t.setTextColor(Color.WHITE);t.setBackground(background(ACCENT,24));}LayoutParams p=new LayoutParams(0,dp(42),1);p.setMargins(dp(3),0,dp(3),0);tabs.addView(t,p);}LayoutParams tp=new LayoutParams(-1,dp(42));tp.setMargins(0,dp(16),0,dp(20));addView(tabs,tp);
   fields=new LinearLayout(getContext());fields.setOrientation(VERTICAL);addView(fields,new LayoutParams(-1,-2));
