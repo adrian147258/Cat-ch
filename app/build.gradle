@@ -1,6 +1,6 @@
 plugins { id 'com.android.application' }
 android { namespace 'com.meowclub.app'; compileSdk 35
- defaultConfig { applicationId 'com.meowclub.app'; minSdk 26; targetSdk 35; versionCode 11; versionName '0.9.0' }
+ defaultConfig { applicationId 'com.meowclub.app'; minSdk 26; targetSdk 35; versionCode 12; versionName '0.9.0' }
  buildFeatures { buildConfig true }
  def props = new Properties()
  def local = rootProject.file('local.properties')

@@ -1,0 +1,2 @@
+CREATE TABLE IF NOT EXISTS announcement (id INTEGER PRIMARY KEY CHECK(id=1), revision TEXT NOT NULL, content TEXT NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS announcement_guard (id TEXT PRIMARY KEY, window_start INTEGER NOT NULL, attempts INTEGER NOT NULL);

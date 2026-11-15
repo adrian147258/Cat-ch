@@ -17,6 +17,14 @@ let mails=[];globalThis.fetch=async(url,opt)=>{assert.equal(url,'https://api.bre
 const run=(path,method='GET',body=null,token=null,more={})=>worker.fetch(new Request('http://localhost:8787'+path,{method,headers:{...(body&&typeof body==='string'?{'Content-Type':'application/json'}:{}),...(token?{Authorization:'Bearer '+token}:{}),...more},...(body?{body}:{}),}),env);
 async function signup(email){let a=await run('/api/auth/sign-up/email','POST',JSON.stringify({name:'Tester',email,password:'test-only-password'}));assert.equal(a.status,200,await a.clone().text());let otp=mails.at(-1).textContent.match(/[0-9]{6}/)[0];let b=await run('/api/auth/email-otp/verify-email','POST',JSON.stringify({email,otp}));assert.equal(b.status,200,await b.clone().text());return b.headers.get('set-auth-token');}
 let first=await signup('one@example.test'),second=await signup('two@example.test');assert.ok(first&&second);
+env.ANNOUNCEMENT_ADMIN_KEY='test-announcement-key-not-real';
+assert.equal((await run('/announcement')).status,401);
+assert.equal((await (await run('/announcement','GET',null,first)).json()).announcement,null);
+assert.equal((await run('/announcement','POST',JSON.stringify({content:'Bad'}),first,{'X-Announcement-Key':'incorrect'})).status,403);
+assert.equal((await run('/announcement','POST',JSON.stringify({content:'x'.repeat(501)}),first,{'X-Announcement-Key':env.ANNOUNCEMENT_ADMIN_KEY})).status,400);
+let announcement=await run('/announcement','POST',JSON.stringify({content:'小猫公告'}),first,{'X-Announcement-Key':env.ANNOUNCEMENT_ADMIN_KEY});assert.equal(announcement.status,200);let originalAnnouncement=await announcement.json();
+let publicAnnouncement=(await (await run('/announcement','GET',null,second)).json()).announcement;assert.equal(publicAnnouncement.content,'小猫公告');assert.equal(publicAnnouncement.revision,originalAnnouncement.revision);assert.equal('key' in publicAnnouncement,false);
+announcement=await run('/announcement','POST',JSON.stringify({content:'新的公告'}),first,{'X-Announcement-Key':env.ANNOUNCEMENT_ADMIN_KEY});assert.equal(announcement.status,200);assert.notEqual((await announcement.json()).revision,originalAnnouncement.revision);
 const jpeg=new Uint8Array([255,216,255,217]);
 let preflight=await run('/posts','OPTIONS');assert.match(preflight.headers.get('Access-Control-Allow-Headers'),/X-Meow-Breed/i);
 let invalid=await run('/posts','POST',jpeg,first,{'X-Meow-Breed':encodeURIComponent('不存在的种类')});assert.equal(invalid.status,400);assert.equal(objects.size,0);

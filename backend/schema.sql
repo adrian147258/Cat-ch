@@ -2,6 +2,8 @@ CREATE TABLE IF NOT EXISTS users (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL 
 CREATE TABLE IF NOT EXISTS profiles (user_id TEXT PRIMARY KEY, signature TEXT NOT NULL DEFAULT '', cover_key TEXT, cover_type TEXT, updated_at INTEGER NOT NULL DEFAULT 0);
 CREATE TABLE IF NOT EXISTS posts (id TEXT PRIMARY KEY, owner_id TEXT NOT NULL, name TEXT NOT NULL, text TEXT NOT NULL, breed TEXT, object_key TEXT NOT NULL, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, created_at INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS post_images (post_id TEXT NOT NULL, position INTEGER NOT NULL, object_key TEXT NOT NULL, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, PRIMARY KEY(post_id,position));
+CREATE TABLE IF NOT EXISTS announcement (id INTEGER PRIMARY KEY CHECK(id=1), revision TEXT NOT NULL, content TEXT NOT NULL, updated_at INTEGER NOT NULL);
+CREATE TABLE IF NOT EXISTS announcement_guard (id TEXT PRIMARY KEY, window_start INTEGER NOT NULL, attempts INTEGER NOT NULL);
 CREATE INDEX IF NOT EXISTS posts_created ON posts(created_at DESC);
 CREATE INDEX IF NOT EXISTS posts_owner_created ON posts(owner_id,created_at DESC);
 CREATE TABLE IF NOT EXISTS reactions (post_id TEXT NOT NULL, user_id TEXT NOT NULL, kind TEXT NOT NULL CHECK(kind IN ('like','save')), PRIMARY KEY(post_id,user_id,kind));

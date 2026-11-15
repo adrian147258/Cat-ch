@@ -78,6 +78,7 @@ catch.apiBaseUrl=https://your-api.example.com
 
 - 多图版本必须先执行 `backend/post-images-migration.sql`，再部署 Worker，最后更新 App。迁移只新增图片表、可重复运行，旧单图帖子仍可读取。未迁移就部署代码会导致广场、主页及删除接口查询失败。
 - 一篇帖子最多 9 张，每张上传文件上限为 5,000,000 字节（5 MB）；客户端在处理原图前也检查该大小。多图共用一次发帖配额、一份评论和点赞总数，失败不会发布部分图片。以前被拆成多篇的帖子不会自动合并。
+- 软件公告使用 `backend/announcement-migration.sql` 创建的数据表。登录后新公告会展示一次，可在「我的」中回看；发布公告位于「设置 → 管理员发布公告」，需要登录及 Worker 机密 `ANNOUNCEMENT_ADMIN_KEY`。口令不得提交到源码或安装包。
 - 点赞数公开，API 不提供点赞者名单。主页作品中的 `liked`/`saved` 仅代表当前请求者对该作品的状态，不是主页所有者的点赞或收藏列表。
 - 忘记密码邮件使用 QQ 邮箱 SMTP，需要 Worker Secret `QQ_SMTP_USER`（完整 QQ 邮箱地址）和 `QQ_SMTP_PASSWORD`（SMTP 授权码，不是 QQ 登录密码）。注册与登录验证码继续走 Brevo。重置发信失败不会回退占用 Brevo 额度。重置成功会使旧登录会话失效。构建 Worker 时应保留 `cloudflare:sockets` 作为外部模块。
 - 执行 `cd backend` 后运行 `npm test` 检查模拟数据库和邮件传输；测试不会发送真实邮件。

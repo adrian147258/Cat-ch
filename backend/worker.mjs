@@ -1,9 +1,10 @@
 import { makeAuth } from './auth.mjs';
 import { postImages, UploadError } from './post-upload.mjs';
+import { timingSafeEqual } from 'node:crypto';
 const MAX_IMAGE = 5_000_000;
 const MAX_POSTS = 100_000;
 const DAILY_PER_USER = 20;
-const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Access-Control-Allow-Headers':'Authorization,Content-Type,X-Meow-Name,X-Meow-Text,X-Meow-Breed,X-Legacy-Token'};
+const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Access-Control-Allow-Headers':'Authorization,Content-Type,X-Meow-Name,X-Meow-Text,X-Meow-Breed,X-Legacy-Token,X-Announcement-Key'};
 const BREEDS = new Set(['橘猫','布偶','狸花','英短','美短','三花','其它']);
 const headers={'Content-Type':'application/json; charset=utf-8','Cache-Control':'no-store',...cors};
 const json=(value,status=200)=>new Response(JSON.stringify(value),{status,headers});
@@ -64,6 +65,16 @@ async function handle(req,env){
   return new Response(object.body,{headers:{'Content-Type':profile.cover_type,'Cache-Control':'public,max-age=300','X-Content-Type-Options':'nosniff',...cors}});
  }
  const me=await user(req,env,auth);if(!me)return fail('身份已失效，请重新打开应用',401);
+ if(path==='/announcement'&&req.method==='GET'){
+  const item=await env.DB.prepare('SELECT revision,content,updated_at FROM announcement WHERE id=1').first();return json({announcement:item||null});
+ }
+ if(path==='/announcement'&&req.method==='POST'){
+  const now=Date.now();await env.DB.prepare('INSERT INTO announcement_guard(id,window_start,attempts) VALUES(?,?,1) ON CONFLICT(id) DO UPDATE SET attempts=CASE WHEN window_start<? THEN 1 ELSE attempts+1 END,window_start=CASE WHEN window_start<? THEN excluded.window_start ELSE window_start END').bind(me.id,now,now-600000,now-600000).run();
+  const guard=await env.DB.prepare('SELECT attempts FROM announcement_guard WHERE id=?').bind(me.id).first();if(guard.attempts>10)return fail('操作过于频繁，请稍后重试',429);
+  const supplied=req.headers.get('X-Announcement-Key')||'';if(!env.ANNOUNCEMENT_ADMIN_KEY||!supplied||!timingSafeEqual(Buffer.from(await digest(supplied),'hex'),Buffer.from(await digest(env.ANNOUNCEMENT_ADMIN_KEY),'hex')))return fail('管理员口令不正确',403);
+  const parsed=await readSmallJson(req);if(parsed.error)return parsed.error;const content=typeof parsed.value?.content==='string'?parsed.value.content.trim():'';if(!content||Array.from(content).length>500)return fail('公告请输入 1 到 500 字');
+  const revision=crypto.randomUUID();await env.DB.prepare('INSERT INTO announcement(id,revision,content,updated_at) VALUES(1,?,?,?) ON CONFLICT(id) DO UPDATE SET revision=excluded.revision,content=excluded.content,updated_at=excluded.updated_at').bind(revision,content,now).run();return json({revision,content,updated_at:now});
+ }
  if(path==='/profile'&&req.method==='GET'){
   const profile=await env.DB.prepare('SELECT signature,cover_key FROM profiles WHERE user_id=?').bind(me.id).first();
   return json({id:me.id,name:me.name,signature:profile?.signature||'',cover:coverPath(me.id,profile?.cover_key)});
