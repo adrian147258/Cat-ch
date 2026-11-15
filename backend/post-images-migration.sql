@@ -1,0 +1,1 @@
+CREATE TABLE IF NOT EXISTS post_images (post_id TEXT NOT NULL, position INTEGER NOT NULL, object_key TEXT NOT NULL, content_type TEXT NOT NULL, size_bytes INTEGER NOT NULL, PRIMARY KEY(post_id,position));

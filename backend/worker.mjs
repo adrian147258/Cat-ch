@@ -1,5 +1,6 @@
 import { makeAuth } from './auth.mjs';
-const MAX_IMAGE = 2_000_000;
+import { postImages, UploadError } from './post-upload.mjs';
+const MAX_IMAGE = 5_000_000;
 const MAX_POSTS = 100_000;
 const DAILY_PER_USER = 20;
 const cors={'Access-Control-Allow-Origin':'*','Access-Control-Allow-Methods':'GET,POST,PUT,DELETE,OPTIONS','Access-Control-Allow-Headers':'Authorization,Content-Type,X-Meow-Name,X-Meow-Text,X-Meow-Breed,X-Legacy-Token'};
@@ -17,13 +18,13 @@ function coverPath(userId,coverKey){
 }
 async function readImage(req){
  const size=Number(req.headers.get('Content-Length')||0);
- if(size>MAX_IMAGE)return {error:fail('图片超过 2MB，请换一张',413)};
+ if(size>MAX_IMAGE)return {error:fail('图片超过 5MB，请换一张',413)};
  if(!req.body)return {error:fail('没有收到图片')};
  const chunks=[];let total=0;const reader=req.body.getReader();
  while(true){
   const {done,value}=await reader.read();if(done)break;
   total+=value.byteLength;
-  if(total>MAX_IMAGE){await reader.cancel();return {error:fail('图片超过 2MB，请换一张',413)};}
+  if(total>MAX_IMAGE){await reader.cancel();return {error:fail('图片超过 5MB，请换一张',413)};}
   chunks.push(value);
  }
  if(!total)return {error:fail('没有收到图片')};
@@ -52,8 +53,8 @@ async function handle(req,env){
  const u=new URL(req.url),path=u.pathname;if(req.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
  if(req.method==='GET'&&path==='/health')return json({ok:true,service:'meowclub',version:1});
  const auth=makeAuth(env);if(path.startsWith('/api/auth/'))return auth.handler(req);
- const match=path.match(/^\/images\/(cloud_[0-9a-f-]{36})$/);
- if(req.method==='GET'&&match){const post=await env.DB.prepare('SELECT object_key,content_type FROM posts WHERE id=?').bind(match[1]).first();if(!post)return fail('图片不存在',404);const obj=await env.PICTURES.get(post.object_key);if(!obj)return fail('图片不存在',404);return new Response(obj.body,{headers:{'Content-Type':post.content_type,'Cache-Control':'public,max-age=300','X-Content-Type-Options':'nosniff',...cors}});}
+ const match=path.match(/^\/images\/(cloud_[0-9a-f-]{36})(?:\/([1-8]))?$/);
+ if(req.method==='GET'&&match){const post=match[2]?await env.DB.prepare('SELECT object_key,content_type FROM post_images WHERE post_id=? AND position=?').bind(match[1],Number(match[2])).first():await env.DB.prepare('SELECT object_key,content_type FROM posts WHERE id=?').bind(match[1]).first();if(!post)return fail('图片不存在',404);const obj=await env.PICTURES.get(post.object_key);if(!obj)return fail('图片不存在',404);return new Response(obj.body,{headers:{'Content-Type':post.content_type,'Cache-Control':'public,max-age=300','X-Content-Type-Options':'nosniff',...cors}});}
  const coverMatch=path.match(/^\/profile-covers\/([A-Za-z0-9_-]{1,128})$/);
  if(req.method==='GET'&&coverMatch){
   const profile=await env.DB.prepare('SELECT cover_key,cover_type FROM profiles WHERE user_id=?').bind(coverMatch[1]).first();
@@ -104,12 +105,15 @@ async function handle(req,env){
   if((before===null)!==(beforeId===null))return fail('作品分页参数不正确');
   if(before!==null&&(!/^\d+$/.test(before)||!Number.isSafeInteger(Number(before))||!/^cloud_[0-9a-f-]{36}$/.test(beforeId)))return fail('作品分页参数不正确');
   const query=before===null
-   ?env.DB.prepare('SELECT id,name,text,breed,created_at FROM posts WHERE owner_id=? ORDER BY created_at DESC,id DESC LIMIT 51').bind(owner.id)
-   :env.DB.prepare('SELECT id,name,text,breed,created_at FROM posts WHERE owner_id=? AND (created_at<? OR (created_at=? AND id<?)) ORDER BY created_at DESC,id DESC LIMIT 51').bind(owner.id,Number(before),Number(before),beforeId);
+   ?env.DB.prepare("SELECT p.id,p.name,p.text,p.breed,p.created_at,1+(SELECT count(*) FROM post_images i WHERE i.post_id=p.id) AS image_count,(SELECT count(*) FROM reactions r WHERE r.post_id=p.id AND r.kind='like') AS like_count FROM posts p WHERE p.owner_id=? ORDER BY p.created_at DESC,p.id DESC LIMIT 51").bind(owner.id)
+   :env.DB.prepare("SELECT p.id,p.name,p.text,p.breed,p.created_at,1+(SELECT count(*) FROM post_images i WHERE i.post_id=p.id) AS image_count,(SELECT count(*) FROM reactions r WHERE r.post_id=p.id AND r.kind='like') AS like_count FROM posts p WHERE p.owner_id=? AND (p.created_at<? OR (p.created_at=? AND p.id<?)) ORDER BY p.created_at DESC,p.id DESC LIMIT 51").bind(owner.id,Number(before),Number(before),beforeId);
   const result=await query.all(),items=result.results.slice(0,50);
   const count=await env.DB.prepare('SELECT COUNT(*) AS count FROM posts WHERE owner_id=?').bind(owner.id).first();
   const last=items[items.length-1];
-  return json({id:owner.id,name:owner.name,signature:profile?.signature||'',cover:coverPath(owner.id,profile?.cover_key),post_count:count?.count||0,next:result.results.length>50?{before:last.created_at,before_id:last.id}:null,posts:items.map(p=>({id:p.id,name:p.name,text:p.text,breed:p.breed,created_at:p.created_at,image:'/images/'+p.id}))});
+  // Return only the viewer's own button states, never the profile owner's reaction history.
+  const own=items.length?(await env.DB.prepare(`SELECT post_id,kind FROM reactions WHERE user_id=? AND post_id IN (${items.map(()=>'?').join(',')})`).bind(me.id,...items.map(p=>p.id)).all()).results:[];
+  const liked=new Set(own.filter(x=>x.kind==='like').map(x=>x.post_id)),saved=new Set(own.filter(x=>x.kind==='save').map(x=>x.post_id));
+  return json({id:owner.id,name:owner.name,signature:profile?.signature||'',cover:coverPath(owner.id,profile?.cover_key),post_count:count?.count||0,next:result.results.length>50?{before:last.created_at,before_id:last.id}:null,posts:items.map(p=>({id:p.id,name:p.name,text:p.text,breed:p.breed,created_at:p.created_at,image_count:p.image_count,like_count:p.like_count,liked:liked.has(p.id),saved:saved.has(p.id),image:'/images/'+p.id}))});
  }
  if(path==='/cards' && req.method==='GET'){
   const day=new Date(Date.now()+8*3600000).toISOString().slice(0,10);
@@ -138,15 +142,31 @@ async function handle(req,env){
  if(req.method==='GET'&&path==='/posts'){
   const r=await env.DB.prepare(`SELECT p.id,p.name,p.text,p.breed,p.owner_id,p.created_at,u.id AS author_id,
    EXISTS(SELECT 1 FROM reactions x WHERE x.post_id=p.id AND x.user_id=? AND x.kind='like') AS liked,
-   EXISTS(SELECT 1 FROM reactions x WHERE x.post_id=p.id AND x.user_id=? AND x.kind='save') AS saved
+   EXISTS(SELECT 1 FROM reactions x WHERE x.post_id=p.id AND x.user_id=? AND x.kind='save') AS saved,
+   (SELECT count(*) FROM reactions x WHERE x.post_id=p.id AND x.kind='like') AS like_count,
+   1+(SELECT count(*) FROM post_images i WHERE i.post_id=p.id) AS image_count
    FROM posts p LEFT JOIN "user" u ON u.id=p.owner_id AND u.emailVerified=1 ORDER BY p.created_at DESC,p.id DESC LIMIT 100`).bind(me.id,me.id).all();
-  return json({posts:r.results.map(p=>({id:p.id,name:p.name,text:p.text,breed:p.breed,author_id:p.author_id,mine:p.owner_id===me.id,liked:!!p.liked,saved:!!p.saved,created_at:p.created_at,image:'/images/'+p.id}))});
+  return json({posts:r.results.map(p=>({id:p.id,name:p.name,text:p.text,breed:p.breed,author_id:p.author_id,mine:p.owner_id===me.id,liked:!!p.liked,saved:!!p.saved,like_count:p.like_count,image_count:p.image_count,created_at:p.created_at,image:'/images/'+p.id}))});
  }
  if(req.method==='POST'&&path==='/posts'){
   const rawBreed=req.headers.get('X-Meow-Breed');
   const breed=rawBreed===null?null:decodeHeader(rawBreed,24);
   // Older clients do not send a breed; preserve compatibility without guessing.
   if(rawBreed!==null&&!BREEDS.has(breed))return fail('请选择有效的小猫种类');
+  if(/^multipart\/form-data(?:;|$)/i.test(req.headers.get('Content-Type')||'')){
+   if(!BREEDS.has(breed))return fail('请选择有效的小猫种类');
+   const id='cloud_'+crypto.randomUUID(),name=decodeHeader(req.headers.get('X-Meow-Name'),24)||'猫猫爱好者',text=decodeHeader(req.headers.get('X-Meow-Text'),200)||'今日份小猫 🐾',now=Date.now(),keys=[],imgs=[];let committed=false;
+   try{
+    for await(const bytes of postImages(req,MAX_IMAGE)){
+     const type=typeOfImage(bytes);if(!type)return fail('只支持 JPG、PNG 和 WebP 图片');
+     const index=imgs.length,key='posts/'+id+(index?'/'+index:'');keys.push(key);
+     await env.PICTURES.put(key,bytes,{httpMetadata:{contentType:type}});imgs.push({type,size:bytes.length});
+    }
+    const statements=[env.DB.prepare('INSERT INTO posts(id,owner_id,name,text,breed,object_key,content_type,size_bytes,created_at) SELECT ?,?,?,?,?,?,?,?,? WHERE (SELECT uploads FROM quota WHERE id=1) < ? AND (SELECT COUNT(*) FROM posts WHERE owner_id=? AND created_at>?) < ?').bind(id,me.id,name,text,breed,keys[0],imgs[0].type,imgs[0].size,now,MAX_POSTS,me.id,now-86400000,DAILY_PER_USER)];
+    for(let i=1;i<imgs.length;i++)statements.push(env.DB.prepare('INSERT INTO post_images(post_id,position,object_key,content_type,size_bytes) SELECT ?,?,?,?,? WHERE EXISTS (SELECT 1 FROM posts WHERE id=?)').bind(id,i,keys[i],imgs[i].type,imgs[i].size,id));
+    const results=await env.DB.batch(statements);committed=!!results[0].meta.changes;if(!committed)return fail('发布已达测试额度，请稍后再试',429);return json({id},201);
+   }catch(error){if(error instanceof UploadError)return fail(error.message,error.status);throw error;}finally{if(!committed)for(const key of keys)try{await env.PICTURES.delete(key)}catch{}}
+  }
   const image=await readImage(req);if(image.error)return image.error;
   const {bytes,type}=image,n=bytes.length;
   const id='cloud_'+crypto.randomUUID(),key='posts/'+id;const name=decodeHeader(req.headers.get('X-Meow-Name'),24)||'猫猫爱好者',text=decodeHeader(req.headers.get('X-Meow-Text'),200)||'今日份小猫 🐾';const now=Date.now();
@@ -156,7 +176,7 @@ async function handle(req,env){
   catch(e){await env.PICTURES.delete(key);throw e;}return json({id},201);
  }
  const react=path.match(/^\/posts\/(cloud_[0-9a-f-]{36})\/(like|save)$/);
- if(req.method==='PUT'&&react){const body=await req.json().catch(()=>null);if(!body||typeof body.active!=='boolean')return fail('请求格式不正确');const p=await env.DB.prepare('SELECT id FROM posts WHERE id=?').bind(react[1]).first();if(!p)return fail('帖子不存在',404);if(body.active)await env.DB.prepare('INSERT OR IGNORE INTO reactions(post_id,user_id,kind) VALUES(?,?,?)').bind(react[1],me.id,react[2]).run();else await env.DB.prepare('DELETE FROM reactions WHERE post_id=? AND user_id=? AND kind=?').bind(react[1],me.id,react[2]).run();return json({ok:true});}
+ if(req.method==='PUT'&&react){const body=await req.json().catch(()=>null);if(!body||typeof body.active!=='boolean')return fail('请求格式不正确');const p=await env.DB.prepare('SELECT id FROM posts WHERE id=?').bind(react[1]).first();if(!p)return fail('帖子不存在',404);if(body.active)await env.DB.prepare('INSERT OR IGNORE INTO reactions(post_id,user_id,kind) VALUES(?,?,?)').bind(react[1],me.id,react[2]).run();else await env.DB.prepare('DELETE FROM reactions WHERE post_id=? AND user_id=? AND kind=?').bind(react[1],me.id,react[2]).run();const count=await env.DB.prepare("SELECT count(*) AS n FROM reactions WHERE post_id=? AND kind='like'").bind(react[1]).first();return json({ok:true,like_count:count.n});}
  const commentsPath=path.match(/^\/posts\/(cloud_[0-9a-f-]{36})\/comments$/);
  if(commentsPath && req.method==='GET'){
   const post=await env.DB.prepare('SELECT id FROM posts WHERE id=?').bind(commentsPath[1]).first();if(!post)return fail('帖子不存在',404);
@@ -171,7 +191,7 @@ async function handle(req,env){
   await env.DB.prepare('INSERT INTO comments(id,post_id,parent_id,owner_id,name,text,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,commentsPath[1],parent,me.id,name,text,now).run();return json({id},201);
  }
  const del=path.match(/^\/posts\/(cloud_[0-9a-f-]{36})$/);
- if(req.method==='DELETE'&&del){const p=await env.DB.prepare('SELECT object_key FROM posts WHERE id=? AND owner_id=?').bind(del[1],me.id).first();if(!p)return fail('没有权限或帖子不存在',404);await env.DB.batch([env.DB.prepare('DELETE FROM comments WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM reactions WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM posts WHERE id=? AND owner_id=?').bind(del[1],me.id)]);await env.PICTURES.delete(p.object_key);return json({ok:true});}
+ if(req.method==='DELETE'&&del){const p=await env.DB.prepare('SELECT object_key FROM posts WHERE id=? AND owner_id=?').bind(del[1],me.id).first();if(!p)return fail('没有权限或帖子不存在',404);const extras=await env.DB.prepare('SELECT object_key FROM post_images WHERE post_id=?').bind(del[1]).all();await env.DB.batch([env.DB.prepare('DELETE FROM comments WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM reactions WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM post_images WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM posts WHERE id=? AND owner_id=?').bind(del[1],me.id)]);await env.PICTURES.delete(p.object_key);for(const image of extras.results)await env.PICTURES.delete(image.object_key);return json({ok:true});}
  return fail('接口不存在',404);
 }
 export default {async fetch(req,env){try{return await handle(req,env)}catch(e){console.error(JSON.stringify({event:'request_error',message:String(e)}));return fail('服务暂时不可用，请稍后重试',500)}}};
