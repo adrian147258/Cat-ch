@@ -10,7 +10,7 @@ legacyDb.exec(await readFile('post-images-migration.sql','utf8'));
 legacyDb.exec(await readFile('post-images-migration.sql','utf8'));
 const oldPost=legacyDb.prepare('SELECT text,breed FROM posts WHERE id=?').get('legacy');
 assert.equal(oldPost.text,'existing');assert.equal(oldPost.breed,null);legacyDb.close();
-const db=new DatabaseSync(':memory:');db.exec(await readFile('schema.sql','utf8'));db.exec(await readFile('auth-schema.sql','utf8'));db.exec(await readFile('comments-migration.sql','utf8'));db.exec(await readFile('cards-migration.sql','utf8'));
+const db=new DatabaseSync(':memory:');db.exec(await readFile('schema.sql','utf8'));db.exec(await readFile('auth-schema.sql','utf8'));
 class Stmt{constructor(s){this.s=s;this.a=[]}bind(...a){this.a=a.map(x=>x instanceof Date?x.getTime():x);return this}async first(){return db.prepare(this.s).get(...this.a)??null}async all(){let st=db.prepare(this.s);let rows=st.all(...this.a);return {results:rows,meta:{changes:Number(db.prepare('SELECT changes() c').get().c),last_row_id:0}}}async run(){let r=db.prepare(this.s).run(...this.a);return {meta:{changes:Number(r.changes),last_row_id:Number(r.lastInsertRowid)}}}}
 const objects=new Map(),env={BETTER_AUTH_SECRET:'test-only-not-a-real-key-1234567890123456789',BREVO_API_KEY:'fake',AUTH_BASE_URL:'http://localhost:8787',DB:{exec:async s=>db.exec(s),prepare:s=>new Stmt(s),batch:async a=>{db.exec('BEGIN');try{let out=[];for(const x of a)out.push(await x.all());db.exec('COMMIT');return out}catch(e){db.exec('ROLLBACK');throw e}}},PICTURES:{put:async(k,v)=>objects.set(k,v),get:async k=>objects.has(k)?{body:objects.get(k)}:null,delete:async k=>objects.delete(k)}};
 let mails=[];globalThis.fetch=async(url,opt)=>{assert.equal(url,'https://api.brevo.com/v3/smtp/email');const body=JSON.parse(opt.body);mails.push(body);return Response.json({messageId:'fake'});};
@@ -100,6 +100,10 @@ assert.equal(objects.size,beforeObjects);assert.equal(db.prepare('SELECT count(*
 const actualPut=env.PICTURES.put;let puts=0;env.PICTURES.put=async(k,v)=>{if(++puts===2)throw new Error('Injected storage failure');return actualPut(k,v);};
 const failed=await run('/posts','POST',form,first,{'X-Meow-Breed':encodeURIComponent('橘猫')});env.PICTURES.put=actualPut;assert.equal(failed.status,500);assert.equal(objects.size,beforeObjects);assert.equal(db.prepare('SELECT count(*) AS n FROM posts').get().n,beforePosts);
 const stored=db.prepare('SELECT object_key FROM post_images WHERE post_id=?').get(multiId).object_key;assert.equal((await run('/posts/'+multiId,'DELETE',null,first)).status,200);assert.equal(objects.has(stored),false);assert.equal((await run('/images/'+multiId+'/1')).status,404);
-assert.equal((await run('/posts/'+id+'/like','PUT',JSON.stringify({active:true}),second)).status,200);assert.equal((await run('/posts/'+id,'DELETE',null,second)).status,404);assert.equal((await run('/posts/'+id,'DELETE',null,first)).status,200);
-let login=await run('/api/auth/sign-in/email','POST',JSON.stringify({email:'one@example.test',password:'test-only-password'}));assert.equal(login.status,200,await login.clone().text());assert.ok(login.headers.get('set-auth-token'));
+assert.equal((await run('/posts/'+id+'/like','PUT',JSON.stringify({active:true,pad:'x'.repeat(5000)}),second)).status,413);
+assert.equal((await run('/posts/'+id+'/comments','POST',JSON.stringify({text:'hi',pad:'x'.repeat(5000)}),second)).status,413);
+assert.equal((await run('/posts/'+id+'/like','PUT',JSON.stringify({active:true}),second)).status,200);assert.equal((await run('/posts/'+id,'DELETE',null,second)).status,404);
+const actualDelete=env.PICTURES.delete;env.PICTURES.delete=async()=>{throw new Error('Injected delete failure');};
+assert.equal((await run('/posts/'+id,'DELETE',null,first)).status,200);env.PICTURES.delete=actualDelete;
+let login=await run('/api/auth/sign-in/email','POST',JSON.stringify({email:'one@example.test',password:'test-only-password'}));assert.equal(login.status,200,await login.clone().text());assert.ok(login.headers.get('set-auth-token'));assert.equal(login.headers.get('Access-Control-Allow-Origin'),'*');
 assert.equal((await run('/session','POST')).status,401);assert.equal((await run('/posts')).status,401);console.log('Passed D1 auth, breed migration and validation, legacy uploads, two-user feed, likes, ownership, and no anonymous session');

@@ -11,3 +11,7 @@ CREATE INDEX IF NOT EXISTS reactions_user_kind ON reactions(user_id,kind);
 CREATE TABLE IF NOT EXISTS quota (id INTEGER PRIMARY KEY CHECK(id=1), uploads INTEGER NOT NULL);
 INSERT OR IGNORE INTO quota(id,uploads) VALUES(1,0);
 CREATE TRIGGER IF NOT EXISTS post_upload_count AFTER INSERT ON posts BEGIN UPDATE quota SET uploads=uploads+1 WHERE id=1; END;
+CREATE TABLE IF NOT EXISTS comments (id TEXT PRIMARY KEY, post_id TEXT NOT NULL, parent_id TEXT, owner_id TEXT NOT NULL, name TEXT NOT NULL, text TEXT NOT NULL, created_at INTEGER NOT NULL);
+CREATE INDEX IF NOT EXISTS comments_post_created ON comments(post_id,created_at,id);
+CREATE TABLE IF NOT EXISTS card_draws (user_id TEXT NOT NULL, day TEXT NOT NULL, tier TEXT NOT NULL CHECK(tier IN ('green','blue','purple','gold')), card_index INTEGER NOT NULL CHECK(card_index >= 0), created_at INTEGER NOT NULL, PRIMARY KEY(user_id, day));
+CREATE INDEX IF NOT EXISTS card_draws_user_created ON card_draws(user_id,created_at DESC);

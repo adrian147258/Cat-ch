@@ -53,7 +53,7 @@ async function readSmallJson(req){
 async function handle(req,env){
  const u=new URL(req.url),path=u.pathname;if(req.method==='OPTIONS')return new Response(null,{status:204,headers:cors});
  if(req.method==='GET'&&path==='/health')return json({ok:true,service:'meowclub',version:1});
- const auth=makeAuth(env);if(path.startsWith('/api/auth/'))return auth.handler(req);
+ const auth=makeAuth(env);if(path.startsWith('/api/auth/')){const res=await auth.handler(req);const h=new Headers(res.headers);for(const [k,v] of Object.entries(cors))if(!h.has(k))h.set(k,v);return new Response(res.body,{status:res.status,statusText:res.statusText,headers:h});}
  const match=path.match(/^\/images\/(cloud_[0-9a-f-]{36})(?:\/([1-8]))?$/);
  if(req.method==='GET'&&match){const post=match[2]?await env.DB.prepare('SELECT object_key,content_type FROM post_images WHERE post_id=? AND position=?').bind(match[1],Number(match[2])).first():await env.DB.prepare('SELECT object_key,content_type FROM posts WHERE id=?').bind(match[1]).first();if(!post)return fail('图片不存在',404);const obj=await env.PICTURES.get(post.object_key);if(!obj)return fail('图片不存在',404);return new Response(obj.body,{headers:{'Content-Type':post.content_type,'Cache-Control':'public,max-age=300','X-Content-Type-Options':'nosniff',...cors}});}
  const coverMatch=path.match(/^\/profile-covers\/([A-Za-z0-9_-]{1,128})$/);
@@ -187,14 +187,15 @@ async function handle(req,env){
   catch(e){await env.PICTURES.delete(key);throw e;}return json({id},201);
  }
  const react=path.match(/^\/posts\/(cloud_[0-9a-f-]{36})\/(like|save)$/);
- if(req.method==='PUT'&&react){const body=await req.json().catch(()=>null);if(!body||typeof body.active!=='boolean')return fail('请求格式不正确');const p=await env.DB.prepare('SELECT id FROM posts WHERE id=?').bind(react[1]).first();if(!p)return fail('帖子不存在',404);if(body.active)await env.DB.prepare('INSERT OR IGNORE INTO reactions(post_id,user_id,kind) VALUES(?,?,?)').bind(react[1],me.id,react[2]).run();else await env.DB.prepare('DELETE FROM reactions WHERE post_id=? AND user_id=? AND kind=?').bind(react[1],me.id,react[2]).run();const count=await env.DB.prepare("SELECT count(*) AS n FROM reactions WHERE post_id=? AND kind='like'").bind(react[1]).first();return json({ok:true,like_count:count.n});}
+ if(req.method==='PUT'&&react){const parsed=await readSmallJson(req);if(parsed.error)return parsed.error;const body=parsed.value;if(!body||typeof body.active!=='boolean')return fail('请求格式不正确');const p=await env.DB.prepare('SELECT id FROM posts WHERE id=?').bind(react[1]).first();if(!p)return fail('帖子不存在',404);if(body.active)await env.DB.prepare('INSERT OR IGNORE INTO reactions(post_id,user_id,kind) VALUES(?,?,?)').bind(react[1],me.id,react[2]).run();else await env.DB.prepare('DELETE FROM reactions WHERE post_id=? AND user_id=? AND kind=?').bind(react[1],me.id,react[2]).run();const count=await env.DB.prepare("SELECT count(*) AS n FROM reactions WHERE post_id=? AND kind='like'").bind(react[1]).first();return json({ok:true,like_count:count.n});}
  const commentsPath=path.match(/^\/posts\/(cloud_[0-9a-f-]{36})\/comments$/);
  if(commentsPath && req.method==='GET'){
   const post=await env.DB.prepare('SELECT id FROM posts WHERE id=?').bind(commentsPath[1]).first();if(!post)return fail('帖子不存在',404);
   const data=await env.DB.prepare('SELECT id,parent_id,name,text,created_at FROM comments WHERE post_id=? ORDER BY created_at ASC,id ASC LIMIT 200').bind(commentsPath[1]).all();return json({comments:data.results});
  }
  if(commentsPath && req.method==='POST'){
-  const input=await req.json().catch(()=>null), text=typeof input?.text==='string'?input.text.trim():'';
+  const parsed=await readSmallJson(req);if(parsed.error)return parsed.error;
+  const input=parsed.value, text=typeof input?.text==='string'?input.text.trim():'';
   if(!text||Array.from(text).length>300)return fail('评论请输入 1 到 300 字');
   if(!await env.DB.prepare('SELECT id FROM posts WHERE id=?').bind(commentsPath[1]).first())return fail('帖子不存在',404);
   const parent=input.parent_id||null;if(parent && (typeof parent!=='string'||!await env.DB.prepare('SELECT id FROM comments WHERE id=? AND post_id=?').bind(parent,commentsPath[1]).first()))return fail('回复的评论不存在',400);
@@ -202,7 +203,7 @@ async function handle(req,env){
   await env.DB.prepare('INSERT INTO comments(id,post_id,parent_id,owner_id,name,text,created_at) VALUES(?,?,?,?,?,?,?)').bind(id,commentsPath[1],parent,me.id,name,text,now).run();return json({id},201);
  }
  const del=path.match(/^\/posts\/(cloud_[0-9a-f-]{36})$/);
- if(req.method==='DELETE'&&del){const p=await env.DB.prepare('SELECT object_key FROM posts WHERE id=? AND owner_id=?').bind(del[1],me.id).first();if(!p)return fail('没有权限或帖子不存在',404);const extras=await env.DB.prepare('SELECT object_key FROM post_images WHERE post_id=?').bind(del[1]).all();await env.DB.batch([env.DB.prepare('DELETE FROM comments WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM reactions WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM post_images WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM posts WHERE id=? AND owner_id=?').bind(del[1],me.id)]);await env.PICTURES.delete(p.object_key);for(const image of extras.results)await env.PICTURES.delete(image.object_key);return json({ok:true});}
+ if(req.method==='DELETE'&&del){const p=await env.DB.prepare('SELECT object_key FROM posts WHERE id=? AND owner_id=?').bind(del[1],me.id).first();if(!p)return fail('没有权限或帖子不存在',404);const extras=await env.DB.prepare('SELECT object_key FROM post_images WHERE post_id=?').bind(del[1]).all();await env.DB.batch([env.DB.prepare('DELETE FROM comments WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM reactions WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM post_images WHERE post_id=?').bind(del[1]),env.DB.prepare('DELETE FROM posts WHERE id=? AND owner_id=?').bind(del[1],me.id)]);for(const key of [p.object_key,...extras.results.map(image=>image.object_key)]){try{await env.PICTURES.delete(key);}catch(error){console.error(JSON.stringify({event:'post_image_cleanup_failed',key}));}}return json({ok:true});}
  return fail('接口不存在',404);
 }
 export default {async fetch(req,env){try{return await handle(req,env)}catch(e){console.error(JSON.stringify({event:'request_error',message:String(e)}));return fail('服务暂时不可用，请稍后重试',500)}}};
